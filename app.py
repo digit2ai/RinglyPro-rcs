@@ -83,12 +83,12 @@ def send_rcs():
             recipient_phone = '+' + recipient_phone
         
         try:
-            # For RCS, use Messaging Service SID, not phone number
+            # Use Messaging Service SID for RCS
             messaging_service_sid = os.getenv('TWILIO_MESSAGING_SERVICE_SID')
             
             # Build the message parameters
             message_params = {
-                'messaging_service_sid': messaging_service_sid,  # Use this instead of 'from_'
+                'messaging_service_sid': messaging_service_sid,
                 'to': recipient_phone,
                 'body': message_body
             }
@@ -97,22 +97,30 @@ def send_rcs():
             if image_url:
                 message_params['media_url'] = [image_url]
             
-            # Add RCS-specific parameters if quick replies exist
+            # Format quick replies for RCS using content_sid or content_variables
             if quick_replies:
-                # Format quick replies for RCS
-                rcs_suggestions = []
-                for reply in quick_replies[:11]:
-                    rcs_suggestions.append({
-                        "type": "reply",
-                        "text": reply,
-                        "postbackData": reply
+                # Create the RCS content with suggestions
+                rcs_actions = []
+                for reply in quick_replies[:11]:  # RCS supports max 11
+                    rcs_actions.append({
+                        "title": reply,
+                        "type": "quickReply",
+                        "id": reply.replace(" ", "_").lower(),
+                        "postback": {
+                            "data": reply
+                        }
                     })
-                message_params['persistent_action'] = rcs_suggestions
+                
+                # Use content variables for RCS actions
+                message_params['content_variables'] = json.dumps({
+                    "1": json.dumps({
+                        "actions": rcs_actions
+                    })
+                })
             
             # Send the message
             message = twilio_client.messages.create(**message_params)
             
-            # Log successful message
             log_message(
                 recipient_phone, message_body, image_url, quick_replies,
                 'sent', 'RCS', message.sid
