@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RCS Message Portal</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header with branding -->
+        <header class="header">
+            <div class="brand">
+                <img src="/static/logo.png" alt="Logo" class="logo" onerror="this.style.display='none'">
+                <h1>RCS Messaging Portal</h1>
+            </div>
+            <span class="status-indicator" id="statusIndicator">Ready</span>
+        </header>
+
+        <!-- Main messaging form -->
+        <div class="card">
+            <h2>Send RCS Message</h2>
+            
+            <form id="rcsForm">
+                <!-- Phone Number -->
+                <div class="form-group">
+                    <label for="phone">Recipient Phone Number</label>
+                    <input 
+                        type="tel" 
+                        id="phone" 
+                        name="phone" 
+                        placeholder="+1234567890" 
+                        required
+                        pattern="[\+]?[0-9]{10,15}"
+                    >
+                    <small>Include country code (e.g., +1 for US)</small>
+                </div>
+
+                <!-- Message Body -->
+                <div class="form-group">
+                    <label for="message">Message</label>
+                    <textarea 
+                        id="message" 
+                        name="message" 
+                        rows="4" 
+                        placeholder="Enter your message here..." 
+                        required
+                        maxlength="1600"
+                    ></textarea>
+                    <small class="char-count">0 / 1600 characters</small>
+                </div>
+
+                <!-- Image URL (Optional) -->
+                <div class="form-group">
+                    <label for="imageUrl">Image URL (Optional)</label>
+                    <input 
+                        type="url" 
+                        id="imageUrl" 
+                        name="imageUrl" 
+                        placeholder="https://example.com/image.jpg"
+                    >
+                    <small>Add an image to your RCS message</small>
+                </div>
+
+                <!-- Quick Replies -->
+                <div class="form-group">
+                    <label>Quick Reply Buttons (Optional)</label>
+                    <div class="quick-replies-container">
+                        <div class="quick-reply-group">
+                            <input type="text" class="quick-reply" placeholder="✅ Confirm">
+                            <button type="button" class="btn-remove" onclick="removeQuickReply(this)">×</button>
+                        </div>
+                        <div class="quick-reply-group">
+                            <input type="text" class="quick-reply" placeholder="🔄 Reschedule">
+                            <button type="button" class="btn-remove" onclick="removeQuickReply(this)">×</button>
+                        </div>
+                        <div class="quick-reply-group">
+                            <input type="text" class="quick-reply" placeholder="📞 Call Us">
+                            <button type="button" class="btn-remove" onclick="removeQuickReply(this)">×</button>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="addQuickReply()">
+                        + Add Quick Reply
+                    </button>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" class="btn btn-primary" id="sendButton">
+                    <span class="btn-text">Send RCS Message</span>
+                    <span class="spinner" style="display: none;"></span>
+                </button>
+            </form>
+
+            <!-- Result Message -->
+            <div id="resultMessage" class="result-message" style="display: none;"></div>
+        </div>
+
+        <!-- Message History -->
+        <div class="card">
+            <div class="history-header">
+                <h2>Message History</h2>
+                <button class="btn btn-secondary btn-sm" onclick="loadMessages()">
+                    🔄 Refresh
+                </button>
+            </div>
+            
+            <div id="messageHistory" class="message-history">
+                <div class="loading">Loading messages...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Character counter
+        const messageTextarea = document.getElementById('message');
+        const charCount = document.querySelector('.char-count');
+        
+        messageTextarea.addEventListener('input', function() {
+            const length = this.value.length;
+            charCount.textContent = `${length} / 1600 characters`;
+            charCount.style.color = length > 1400 ? '#ff6b6b' : '#666';
+        });
+
+        // Quick Reply Management
+        function addQuickReply() {
+            const container = document.querySelector('.quick-replies-container');
+            const newReply = document.createElement('div');
+            newReply.className = 'quick-reply-group';
+            newReply.innerHTML = `
+                <input type="text" class="quick-reply" placeholder="Enter quick reply text">
+                <button type="button" class="btn-remove" onclick="removeQuickReply(this)">×</button>
+            `;
+            container.appendChild(newReply);
+        }
+
+        function removeQuickReply(button) {
+            button.parentElement.remove();
+        }
+
+        // Form Submission
+        document.getElementById('rcsForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const sendButton = document.getElementById('sendButton');
+            const statusIndicator = document.getElementById('statusIndicator');
+            const resultMessage = document.getElementById('resultMessage');
+            
+            // Disable button and show spinner
+            sendButton.disabled = true;
+            sendButton.querySelector('.btn-text').style.display = 'none';
+            sendButton.querySelector('.spinner').style.display = 'inline-block';
+            statusIndicator.textContent = 'Sending...';
+            statusIndicator.className = 'status-indicator sending';
+            
+            // Collect quick replies
+            const quickReplies = [];
+            document.querySelectorAll('.quick-reply').forEach(input => {
+                if (input.value.trim()) {
+                    quickReplies.push(input.value.trim());
+                }
+            });
+            
+            // Prepare data
+            const data = {
+                phone: document.getElementById('phone').value,
+                message: document.getElementById('message').value,
+                image_url: document.getElementById('imageUrl').value || null,
+                quick_replies: quickReplies.length > 0 ? quickReplies : null
+            };
+            
+            try {
+                const response = await fetch('/send-rcs', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    // Success
+                    resultMessage.className = 'result-message success';
+                    resultMessage.innerHTML = `
+                        <strong>✅ Message Sent!</strong><br>
+                        Type: ${result.message_type}<br>
+                        ID: ${result.sid}
+                        ${result.note ? `<br><small>${result.note}</small>` : ''}
+                    `;
+                    statusIndicator.textContent = 'Sent';
+                    statusIndicator.className = 'status-indicator success';
+                    
+                    // Clear form
+                    document.getElementById('phone').value = '';
+                    document.getElementById('message').value = '';
+                    document.getElementById('imageUrl').value = '';
+                    charCount.textContent = '0 / 1600 characters';
+                    
+                    // Reload message history
+                    loadMessages();
+                } else {
+                    // Error
+                    resultMessage.className = 'result-message error';
+                    resultMessage.innerHTML = `<strong>❌ Error:</strong> ${result.error}`;
+                    statusIndicator.textContent = 'Error';
+                    statusIndicator.className = 'status-indicator error';
+                }
+                
+                resultMessage.style.display = 'block';
+                
+                // Hide message after 5 seconds
+                setTimeout(() => {
+                    resultMessage.style.display = 'none';
+                    statusIndicator.textContent = 'Ready';
+                    statusIndicator.className = 'status-indicator';
+                }, 5000);
+                
+            } catch (error) {
+                resultMessage.className = 'result-message error';
+                resultMessage.innerHTML = `<strong>❌ Error:</strong> ${error.message}`;
+                resultMessage.style.display = 'block';
+                statusIndicator.textContent = 'Error';
+                statusIndicator.className = 'status-indicator error';
+            } finally {
+                // Re-enable button
+                sendButton.disabled = false;
+                sendButton.querySelector('.btn-text').style.display = 'inline';
+                sendButton.querySelector('.spinner').style.display = 'none';
+            }
+        });
+
+        // Load Message History
+        async function loadMessages() {
+            const historyContainer = document.getElementById('messageHistory');
+            historyContainer.innerHTML = '<div class="loading">Loading messages...</div>';
+            
+            try {
+                const response = await fetch('/messages?limit=20');
+                const messages = await response.json();
+                
+                if (messages.length === 0) {
+                    historyContainer.innerHTML = '<div class="no-messages">No messages yet</div>';
+                    return;
+                }
+                
+                historyContainer.innerHTML = messages.map(msg => `
+                    <div class="message-item ${msg.message_type.toLowerCase()}">
+                        <div class="message-header">
+                            <span class="message-type">${msg.message_type}</span>
+                            <span class="message-time">${new Date(msg.timestamp).toLocaleString()}</span>
+                        </div>
+                        <div class="message-recipient">To: ${msg.recipient}</div>
+                        <div class="message-body">${msg.message}</div>
+                        ${msg.image_url ? `<div class="message-attachment">📎 Image attached</div>` : ''}
+                        ${msg.quick_replies ? `
+                            <div class="message-quick-replies">
+                                ${JSON.parse(msg.quick_replies).map(qr => 
+                                    `<span class="quick-reply-badge">${qr}</span>`
+                                ).join('')}
+                            </div>
+                        ` : ''}
+                        <div class="message-status status-${msg.status}">${msg.status}</div>
+                    </div>
+                `).join('');
+                
+            } catch (error) {
+                historyContainer.innerHTML = `<div class="error">Failed to load messages: ${error.message}</div>`;
+            }
+        }
+
+        // Load messages on page load
+        window.addEventListener('DOMContentLoaded', loadMessages);
+        
+        // Auto-refresh messages every 30 seconds
+        setInterval(loadMessages, 30000);
+
+        // iframe communication (optional)
+        window.addEventListener('message', function(event) {
+            // Handle messages from parent window if embedded in iframe
+            if (event.data.action === 'sendRCS') {
+                document.getElementById('phone').value = event.data.phone || '';
+                document.getElementById('message').value = event.data.message || '';
+            }
+        });
+    </script>
+</body>
+</html>
