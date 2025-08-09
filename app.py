@@ -17,8 +17,10 @@ CORS(app)
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_MESSAGING_SERVICE_SID = os.getenv('TWILIO_MESSAGING_SERVICE_SID')
+TWILIO_PHONE_NUMBER = '+18886103810'  # Your toll-free number
 
-# Your new RCS Card Template SID
+# Your RCS Configuration
+RCS_AGENT = 'rcs:crmautopilot_mq8sq68w_agent'  # Your RCS agent
 RCS_APPOINTMENT_TEMPLATE_SID = 'HX73731cf6e6a059ba71d48a356ad3db40'
 
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -45,23 +47,128 @@ def init_db():
 
 init_db()
 
-# ADD THIS: Root route for the main interface
 @app.route('/')
 def index():
     """Serve the main RCS client interface"""
     return render_template('rcs.html')
 
-# ADD THIS: Health check endpoint
 @app.route('/health')
 def health():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'service': 'RinglyPro RCS Service',
-        'timestamp': datetime.now().isoformat()
+        'rcs_agent': RCS_AGENT,
+        'has_senders': True
     }), 200
 
-# ADD THIS: Get messages endpoint
+@app.route('/send-rcs', methods=['POST'])
+def send_rcs():
+    """Send RCS message using your configured RCS agent"""
+    try:
+        data = request.json
+        recipient_phone = data.get('phone')
+        
+        if not recipient_phone:
+            return jsonify({'error': 'Phone number is required'}), 400
+            
+        if not recipient_phone.startswith('+'):
+            recipient_phone = '+' + recipient_phone
+        
+        # Get variables for template
+        customer_name = data.get('customer_name', data.get('name', 'Customer'))
+        appointment_date = data.get('date', 'tomorrow')
+        appointment_time = data.get('time', '2:00 PM')
+        
+        print(f"Sending RCS to {recipient_phone}")
+        print(f"Using Messaging Service: {TWILIO_MESSAGING_SERVICE_SID}")
+        print(f"Using Content Template: {RCS_APPOINTMENT_TEMPLATE_SID}")
+        
+        try:
+            # Send RCS using Content Template and Messaging Service
+            # The messaging service will automatically select the RCS agent
+            message = twilio_client.messages.create(
+                messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
+                to=recipient_phone,
+                content_sid=RCS_APPOINTMENT_TEMPLATE_SID,
+                content_variables=json.dumps({
+                    "1": customer_name,
+                    "2": appointment_date,
+                    "3": appointment_time
+                })
+            )
+            
+            print(f"Message sent: {message.sid}")
+            print(f"Status: {message.status}")
+            
+            # Check if it actually sent as RCS
+            sent_message = twilio_client.messages(message.sid).fetch()
+            actual_from = sent_message.from_
+            is_rcs = 'rcs:' in str(actual_from).lower()
+            
+            # Log the message
+            conn = sqlite3.connect('messages.db')
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO messages 
+                (recipient, message, template_used, variables, status, message_type, sid)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                recipient_phone, 
+                f"Appointment for {customer_name} on {appointment_date} at {appointment_time}",
+                RCS_APPOINTMENT_TEMPLATE_SID,
+                json.dumps({"name": customer_name, "date": appointment_date, "time": appointment_time}),
+                'sent', 
+                'RCS' if is_rcs else 'SMS',
+                message.sid
+            ))
+            conn.commit()
+            conn.close()
+            
+            return jsonify({
+                'success': True,
+                'message_sid': message.sid,
+                'status': 'sent',
+                'message_type': 'RCS' if is_rcs else 'SMS',
+                'from': str(actual_from),
+                'template_used': True
+            }), 200
+            
+        except TwilioRestException as e:
+            print(f"RCS failed: {str(e)}, falling back to SMS")
+            
+            # Fallback to SMS with quick reply instructions
+            sms_body = f"Hi {customer_name}! Appointment on {appointment_date} at {appointment_time}.\n\nReply:\n1 - Confirm\n2 - Reschedule\n3 - Call Us"
+            
+            message = twilio_client.messages.create(
+                messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
+                to=recipient_phone,
+                body=sms_body  # Regular SMS body
+            )
+            
+            # Log SMS
+            conn = sqlite3.connect('messages.db')
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO messages 
+                (recipient, message, status, message_type, sid)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (recipient_phone, sms_body, 'sent', 'SMS', message.sid))
+            conn.commit()
+            conn.close()
+            
+            return jsonify({
+                'success': True,
+                'message_sid': message.sid,
+                'status': 'sent',
+                'message_type': 'SMS',
+                'note': 'Sent as SMS (RCS unavailable for this recipient)'
+            }), 200
+                
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/messages', methods=['GET'])
 def get_messages():
     """Get message history"""
@@ -92,155 +199,36 @@ def get_messages():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Your existing send-rcs route
-@app.route('/send-rcs', methods=['POST'])
-def send_rcs():
-    """Send RCS message using Card template with quick replies"""
-    try:
-        data = request.json
-        recipient_phone = data.get('phone')
-        
-        # Get variables for the template
-        customer_name = data.get('customer_name', data.get('name', 'Customer'))
-        appointment_date = data.get('date', 'tomorrow')
-        appointment_time = data.get('time', '2:00 PM')
-        
-        # Also support the original message format
-        message_body = data.get('message', '')
-        
-        # Validate phone number
-        if not recipient_phone:
-            return jsonify({'error': 'Phone number is required'}), 400
-            
-        if not recipient_phone.startswith('+'):
-            recipient_phone = '+' + recipient_phone
-        
-        try:
-            # If we have a direct message, use it; otherwise use template
-            if message_body and not customer_name:
-                # Simple message without template
-                message = twilio_client.messages.create(
-                    messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                    to=recipient_phone,
-                    body=message_body
-                )
-            else:
-                # Use RCS Card template
-                message = twilio_client.messages.create(
-                    messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                    to=recipient_phone,
-                    content_sid=RCS_APPOINTMENT_TEMPLATE_SID,
-                    content_variables=json.dumps({
-                        "1": customer_name,
-                        "2": appointment_date,
-                        "3": appointment_time
-                    })
-                )
-            
-            # Log the message
-            conn = sqlite3.connect('messages.db')
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO messages 
-                (recipient, message, template_used, variables, status, message_type, sid)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                recipient_phone, 
-                message_body or f"Appointment reminder for {customer_name}",
-                RCS_APPOINTMENT_TEMPLATE_SID if not message_body else None,
-                json.dumps({"name": customer_name, "date": appointment_date, "time": appointment_time}) if not message_body else None,
-                'sent', 
-                'RCS', 
-                message.sid
-            ))
-            conn.commit()
-            conn.close()
-            
-            return jsonify({
-                'success': True,
-                'message_sid': message.sid,
-                'status': 'sent',
-                'message_type': 'RCS',
-                'sid': message.sid
-            }), 200
-            
-        except TwilioRestException as e:
-            print(f"RCS failed, falling back to SMS: {str(e)}")
-            
-            # Fallback to SMS
-            try:
-                if message_body:
-                    sms_body = message_body
-                else:
-                    sms_body = f"Hi {customer_name}! Appointment on {appointment_date} at {appointment_time}. Reply 1 to Confirm, 2 to Reschedule, 3 to Call us."
-                
-                message = twilio_client.messages.create(
-                    messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                    to=recipient_phone,
-                    body=sms_body
-                )
-                
-                # Log SMS message
-                conn = sqlite3.connect('messages.db')
-                c = conn.cursor()
-                c.execute('''
-                    INSERT INTO messages 
-                    (recipient, message, status, message_type, sid)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (recipient_phone, sms_body, 'sent', 'SMS', message.sid))
-                conn.commit()
-                conn.close()
-                
-                return jsonify({
-                    'success': True,
-                    'message_sid': message.sid,
-                    'status': 'sent',
-                    'message_type': 'SMS',
-                    'sid': message.sid,
-                    'note': 'Sent as SMS (RCS unavailable)'
-                }), 200
-                
-            except Exception as sms_error:
-                return jsonify({'error': f'Failed to send: {str(sms_error)}'}), 500
-                
-    except Exception as e:
-        print(f"Error in send_rcs: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-# Webhook to handle quick reply responses
+# Webhook for button responses
 @app.route('/rcs-webhook', methods=['POST'])
 def handle_rcs_webhook():
-    """Handle incoming RCS quick reply button clicks"""
+    """Handle RCS quick reply button clicks"""
     try:
-        # Get the webhook data
         message_sid = request.form.get('MessageSid')
         from_number = request.form.get('From')
         button_payload = request.form.get('ButtonPayload')
         body = request.form.get('Body')
         
-        print(f"Webhook received - Button: {button_payload}, From: {from_number}")
+        print(f"Webhook: Button '{button_payload}' clicked by {from_number}")
         
-        # Handle different button responses
-        if button_payload == 'confirm':
-            twilio_client.messages.create(
-                messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                to=from_number,
-                body="✅ Great! Your appointment is confirmed. We'll see you soon!"
-            )
-        elif button_payload == 'reschedule':
-            twilio_client.messages.create(
-                messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                to=from_number,
-                body="To reschedule, please call us at 1-888-610-3810 or reply with your preferred date and time."
-            )
-        elif button_payload == 'call_us':
-            twilio_client.messages.create(
-                messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                to=from_number,
-                body="📞 Please call us at 1-888-610-3810. We're available Mon-Fri 9AM-5PM."
-            )
+        # Respond based on button clicked
+        response_messages = {
+            'confirm': "✅ Perfect! Your appointment is confirmed. See you soon!",
+            'reschedule': "📅 To reschedule, please call 1-888-610-3810 or reply with your preferred date/time.",
+            'call_us': "📞 Call us at 1-888-610-3810 (Mon-Fri 9AM-5PM EST)"
+        }
+        
+        response_text = response_messages.get(button_payload, "Thank you for your response!")
+        
+        # Send response
+        twilio_client.messages.create(
+            messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
+            to=from_number,
+            body=response_text
+        )
         
         return '', 200
+        
     except Exception as e:
         print(f"Webhook error: {str(e)}")
         return '', 200
