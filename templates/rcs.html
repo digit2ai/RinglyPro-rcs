@@ -36,15 +36,48 @@
                     <small>Include country code (e.g., +1 for US)</small>
                 </div>
 
-                <!-- Message Body -->
+                <!-- Customer Name (for template) -->
                 <div class="form-group">
-                    <label for="message">Message</label>
+                    <label for="customerName">Customer Name</label>
+                    <input 
+                        type="text" 
+                        id="customerName" 
+                        name="customerName" 
+                        placeholder="John Smith"
+                    >
+                    <small>Name for appointment reminder</small>
+                </div>
+
+                <!-- Date and Time -->
+                <div class="form-group" style="display: flex; gap: 1rem;">
+                    <div style="flex: 1;">
+                        <label for="appointmentDate">Date</label>
+                        <input 
+                            type="text" 
+                            id="appointmentDate" 
+                            name="appointmentDate" 
+                            placeholder="Tomorrow"
+                        >
+                    </div>
+                    <div style="flex: 1;">
+                        <label for="appointmentTime">Time</label>
+                        <input 
+                            type="text" 
+                            id="appointmentTime" 
+                            name="appointmentTime" 
+                            placeholder="2:00 PM"
+                        >
+                    </div>
+                </div>
+
+                <!-- Message Body (Optional Custom Message) -->
+                <div class="form-group">
+                    <label for="message">Custom Message (Optional)</label>
                     <textarea 
                         id="message" 
                         name="message" 
                         rows="4" 
-                        placeholder="Enter your message here..." 
-                        required
+                        placeholder="Leave empty to use appointment template, or enter custom message..." 
                         maxlength="1600"
                     ></textarea>
                     <small class="char-count">0 / 1600 characters</small>
@@ -67,15 +100,15 @@
                     <label>Quick Reply Buttons (Optional)</label>
                     <div class="quick-replies-container">
                         <div class="quick-reply-group">
-                            <input type="text" class="quick-reply" placeholder="✅ Confirm">
+                            <input type="text" class="quick-reply" value="✅ Confirm" placeholder="✅ Confirm">
                             <button type="button" class="btn-remove" onclick="removeQuickReply(this)">×</button>
                         </div>
                         <div class="quick-reply-group">
-                            <input type="text" class="quick-reply" placeholder="🔄 Reschedule">
+                            <input type="text" class="quick-reply" value="🔄 Reschedule" placeholder="🔄 Reschedule">
                             <button type="button" class="btn-remove" onclick="removeQuickReply(this)">×</button>
                         </div>
                         <div class="quick-reply-group">
-                            <input type="text" class="quick-reply" placeholder="📞 Call Us">
+                            <input type="text" class="quick-reply" value="📞 Call Us" placeholder="📞 Call Us">
                             <button type="button" class="btn-remove" onclick="removeQuickReply(this)">×</button>
                         </div>
                     </div>
@@ -115,11 +148,13 @@
         const messageTextarea = document.getElementById('message');
         const charCount = document.querySelector('.char-count');
         
-        messageTextarea.addEventListener('input', function() {
-            const length = this.value.length;
-            charCount.textContent = `${length} / 1600 characters`;
-            charCount.style.color = length > 1400 ? '#ff6b6b' : '#666';
-        });
+        if (messageTextarea && charCount) {
+            messageTextarea.addEventListener('input', function() {
+                const length = this.value.length;
+                charCount.textContent = `${length} / 1600 characters`;
+                charCount.style.color = length > 1400 ? '#ff6b6b' : '#666';
+            });
+        }
 
         // Quick Reply Management
         function addQuickReply() {
@@ -152,6 +187,14 @@
             statusIndicator.textContent = 'Sending...';
             statusIndicator.className = 'status-indicator sending';
             
+            // Collect form data
+            const phone = document.getElementById('phone').value;
+            const customerName = document.getElementById('customerName').value || 'Customer';
+            const appointmentDate = document.getElementById('appointmentDate').value || 'tomorrow';
+            const appointmentTime = document.getElementById('appointmentTime').value || '2:00 PM';
+            const customMessage = document.getElementById('message').value;
+            const imageUrl = document.getElementById('imageUrl').value;
+            
             // Collect quick replies
             const quickReplies = [];
             document.querySelectorAll('.quick-reply').forEach(input => {
@@ -162,11 +205,24 @@
             
             // Prepare data
             const data = {
-                phone: document.getElementById('phone').value,
-                message: document.getElementById('message').value,
-                image_url: document.getElementById('imageUrl').value || null,
-                quick_replies: quickReplies.length > 0 ? quickReplies : null
+                phone: phone,
+                customer_name: customerName,
+                date: appointmentDate,
+                time: appointmentTime
             };
+            
+            // Add optional fields if present
+            if (customMessage) {
+                data.message = customMessage;
+            }
+            if (imageUrl) {
+                data.image_url = imageUrl;
+            }
+            if (quickReplies.length > 0) {
+                data.quick_replies = quickReplies;
+            }
+            
+            console.log('Sending data:', data);
             
             try {
                 const response = await fetch('/send-rcs', {
@@ -178,14 +234,15 @@
                 });
                 
                 const result = await response.json();
+                console.log('Response:', result);
                 
-                if (response.ok) {
+                if (response.ok && result.success) {
                     // Success
                     resultMessage.className = 'result-message success';
                     resultMessage.innerHTML = `
                         <strong>✅ Message Sent!</strong><br>
-                        Type: ${result.message_type}<br>
-                        ID: ${result.sid}
+                        Type: ${result.message_type || 'SMS'}<br>
+                        ID: ${result.message_sid || result.sid || 'N/A'}
                         ${result.note ? `<br><small>${result.note}</small>` : ''}
                     `;
                     statusIndicator.textContent = 'Sent';
@@ -193,18 +250,22 @@
                     
                     // Clear form
                     document.getElementById('phone').value = '';
+                    document.getElementById('customerName').value = '';
+                    document.getElementById('appointmentDate').value = '';
+                    document.getElementById('appointmentTime').value = '';
                     document.getElementById('message').value = '';
                     document.getElementById('imageUrl').value = '';
-                    charCount.textContent = '0 / 1600 characters';
+                    if (charCount) charCount.textContent = '0 / 1600 characters';
                     
                     // Reload message history
                     loadMessages();
                 } else {
                     // Error
                     resultMessage.className = 'result-message error';
-                    resultMessage.innerHTML = `<strong>❌ Error:</strong> ${result.error}`;
+                    resultMessage.innerHTML = `<strong>❌ Error:</strong> ${result.error || 'Failed to send message'}`;
                     statusIndicator.textContent = 'Error';
                     statusIndicator.className = 'status-indicator error';
+                    console.error('Error response:', result);
                 }
                 
                 resultMessage.style.display = 'block';
@@ -217,6 +278,7 @@
                 }, 5000);
                 
             } catch (error) {
+                console.error('Fetch error:', error);
                 resultMessage.className = 'result-message error';
                 resultMessage.innerHTML = `<strong>❌ Error:</strong> ${error.message}`;
                 resultMessage.style.display = 'block';
@@ -239,25 +301,27 @@
                 const response = await fetch('/messages?limit=20');
                 const messages = await response.json();
                 
+                if (!response.ok) {
+                    throw new Error(messages.error || 'Failed to load messages');
+                }
+                
                 if (messages.length === 0) {
                     historyContainer.innerHTML = '<div class="no-messages">No messages yet</div>';
                     return;
                 }
                 
                 historyContainer.innerHTML = messages.map(msg => `
-                    <div class="message-item ${msg.message_type.toLowerCase()}">
+                    <div class="message-item ${msg.message_type ? msg.message_type.toLowerCase() : 'sms'}">
                         <div class="message-header">
-                            <span class="message-type">${msg.message_type}</span>
+                            <span class="message-type">${msg.message_type || 'SMS'}</span>
                             <span class="message-time">${new Date(msg.timestamp).toLocaleString()}</span>
                         </div>
                         <div class="message-recipient">To: ${msg.recipient}</div>
                         <div class="message-body">${msg.message}</div>
                         ${msg.image_url ? `<div class="message-attachment">📎 Image attached</div>` : ''}
-                        ${msg.quick_replies ? `
-                            <div class="message-quick-replies">
-                                ${JSON.parse(msg.quick_replies).map(qr => 
-                                    `<span class="quick-reply-badge">${qr}</span>`
-                                ).join('')}
+                        ${msg.variables ? `
+                            <div class="message-variables">
+                                <small>Template vars: ${JSON.stringify(msg.variables)}</small>
                             </div>
                         ` : ''}
                         <div class="message-status status-${msg.status}">${msg.status}</div>
@@ -265,6 +329,7 @@
                 `).join('');
                 
             } catch (error) {
+                console.error('Error loading messages:', error);
                 historyContainer.innerHTML = `<div class="error">Failed to load messages: ${error.message}</div>`;
             }
         }
@@ -281,6 +346,7 @@
             if (event.data.action === 'sendRCS') {
                 document.getElementById('phone').value = event.data.phone || '';
                 document.getElementById('message').value = event.data.message || '';
+                document.getElementById('customerName').value = event.data.customer_name || '';
             }
         });
     </script>
