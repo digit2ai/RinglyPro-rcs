@@ -443,30 +443,29 @@ def get_messages():
 def handle_rcs_webhook():
     """Handle incoming messages with AI intelligence"""
     try:
-        # LOG ALL INCOMING DATA
+        # LOG ALL DATA TO SEE THE DIFFERENCE
         print("=" * 50)
-        print("WEBHOOK TRIGGERED!")
+        print("WEBHOOK RECEIVED!")
         print("=" * 50)
-        print(f"Request Method: {request.method}")
-        print(f"Request Headers: {dict(request.headers)}")
-        print(f"Form Data: {dict(request.form)}")
-        print(f"JSON Data: {request.json if request.is_json else 'No JSON'}")
-        print("=" * 50)
+        print(f"All form data: {dict(request.form)}")
         
         # Get webhook data
         message_sid = request.form.get('MessageSid')
-        from_number = request.form.get('From')
-        to_number = request.form.get('To')
+        from_number = request.form.get('From', '')
+        to_number = request.form.get('To', '')
         button_payload = request.form.get('ButtonPayload')
         body = request.form.get('Body', '').strip()
         
-        print(f"MessageSid: {message_sid}")
-        print(f"From: {from_number}")
+        # FIX: Clean the phone number (remove rcs: prefix if present)
+        if from_number.startswith('rcs:'):
+            from_number = from_number.replace('rcs:', '')
+        if from_number.startswith('messenger:'):
+            from_number = from_number.replace('messenger:', '')
+            
+        print(f"Original From: {request.form.get('From')}")
+        print(f"Cleaned From: {from_number}")
         print(f"To: {to_number}")
         print(f"Body: {body}")
-        print(f"Button: {button_payload}")
-        
-        # Rest of your webhook code...
         
         response_text = ""
         
@@ -479,14 +478,12 @@ def handle_rcs_webhook():
                 response_text = "✅ Perfect! Your appointment is confirmed. We'll send you a reminder 24 hours before."
             elif button_lower in ['reschedule']:
                 response_text = "📅 No problem! When would work better for you? Reply with your preferred date and time."
-            elif button_lower in ['call', 'call_us', 'call us']:
-                response_text = "📞 Please call us at 1-888-610-3810. We're available Mon-Fri 9AM-5PM EST."
             else:
                 response_text = ai_responder.get_response(button_payload, from_number)
         
         # Handle text messages with AI
         elif body:
-            # Handle numbered responses (for SMS fallback)
+            # Handle numbered responses
             if body.strip() == '1':
                 response_text = "✅ Perfect! Your appointment is confirmed. We'll see you soon!"
             elif body.strip() == '2':
@@ -501,38 +498,45 @@ def handle_rcs_webhook():
                 intent = ai_responder.detect_intent(body)
                 log_conversation(from_number, body, response_text, str(intent))
         
-        else:
-            response_text = "Thanks for reaching out to RinglyPro! How can I help you today?"
-        
-        # Send the intelligent response
+        # Send response if we have one
         if response_text and from_number:
-            # For long responses, use RCS card
-            if len(response_text) > 300 and RCS_CARD_TEMPLATE_SID:
+            # IMPORTANT: Check if this is an RCS conversation
+            original_from = request.form.get('From', '')
+            
+            # If the original message came from RCS, try to respond with RCS first
+            if 'rcs:' in original_from.lower() and RCS_CARD_TEMPLATE_SID:
                 try:
+                    # Try RCS response first
                     twilio_client.messages.create(
                         messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                        to=from_number,
+                        to=from_number,  # Use cleaned number
                         content_sid=RCS_CARD_TEMPLATE_SID,
                         content_variables=json.dumps({
                             "1": response_text
                         })
                     )
-                except:
+                    print(f"Sent RCS response to {from_number}")
+                except Exception as e:
+                    print(f"RCS failed, falling back to SMS: {e}")
                     # Fallback to regular SMS
                     twilio_client.messages.create(
                         messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
                         to=from_number,
                         body=response_text
                     )
+                    print(f"Sent SMS response to {from_number}")
             else:
-                # Send as regular message
+                # Regular SMS response
                 twilio_client.messages.create(
                     messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
                     to=from_number,
                     body=response_text
                 )
+                print(f"Sent SMS response to {from_number}")
             
             print(f"AI Response sent: {response_text[:100]}...")
+        else:
+            print("No response text generated or no from_number")
         
         return '', 200
         
