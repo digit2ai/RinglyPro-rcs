@@ -443,16 +443,30 @@ def get_messages():
 def handle_rcs_webhook():
     """Handle incoming messages with AI intelligence"""
     try:
+        # LOG ALL INCOMING DATA
+        print("=" * 50)
+        print("WEBHOOK TRIGGERED!")
+        print("=" * 50)
+        print(f"Request Method: {request.method}")
+        print(f"Request Headers: {dict(request.headers)}")
+        print(f"Form Data: {dict(request.form)}")
+        print(f"JSON Data: {request.json if request.is_json else 'No JSON'}")
+        print("=" * 50)
+        
         # Get webhook data
         message_sid = request.form.get('MessageSid')
         from_number = request.form.get('From')
+        to_number = request.form.get('To')
         button_payload = request.form.get('ButtonPayload')
         body = request.form.get('Body', '').strip()
         
-        print(f"=== AI WEBHOOK RECEIVED ===")
+        print(f"MessageSid: {message_sid}")
         print(f"From: {from_number}")
-        print(f"Message: {body}")
+        print(f"To: {to_number}")
+        print(f"Body: {body}")
         print(f"Button: {button_payload}")
+        
+        # Rest of your webhook code...
         
         response_text = ""
         
