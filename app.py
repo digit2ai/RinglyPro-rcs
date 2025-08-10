@@ -443,11 +443,22 @@ def get_messages():
 def handle_rcs_webhook():
     """Handle incoming messages with AI intelligence"""
     try:
-        # LOG ALL DATA TO SEE THE DIFFERENCE
-        print("=" * 50)
-        print("WEBHOOK RECEIVED!")
-        print("=" * 50)
-        print(f"All form data: {dict(request.form)}")
+        # LOG ABSOLUTELY EVERYTHING
+        print("\n" + "🔴" * 25)
+        print("WEBHOOK HIT!")
+        print("🔴" * 25)
+        print(f"Timestamp: {datetime.now()}")
+        print(f"Method: {request.method}")
+        print("\n--- ALL HEADERS ---")
+        for header, value in request.headers:
+            print(f"{header}: {value}")
+        print("\n--- ALL FORM DATA ---")
+        for key, value in request.form.items():
+            print(f"{key}: {value}")
+        print("\n--- ALL ARGS ---")
+        for key, value in request.args.items():
+            print(f"{key}: {value}")
+        print("🔴" * 25 + "\n")
         
         # Get webhook data
         message_sid = request.form.get('MessageSid')
@@ -466,6 +477,7 @@ def handle_rcs_webhook():
         print(f"Cleaned From: {from_number}")
         print(f"To: {to_number}")
         print(f"Body: {body}")
+        print(f"Button: {button_payload}")
         
         response_text = ""
         
@@ -497,47 +509,30 @@ def handle_rcs_webhook():
                 # Log the conversation
                 intent = ai_responder.detect_intent(body)
                 log_conversation(from_number, body, response_text, str(intent))
-        
-        # Send response if we have one
-        if response_text and from_number:
-            # IMPORTANT: Check if this is an RCS conversation
-            original_from = request.form.get('From', '')
-            
-            # If the original message came from RCS, try to respond with RCS first
-            if 'rcs:' in original_from.lower() and RCS_CARD_TEMPLATE_SID:
-                try:
-                    # Try RCS response first
-                    twilio_client.messages.create(
-                        messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                        to=from_number,  # Use cleaned number
-                        content_sid=RCS_CARD_TEMPLATE_SID,
-                        content_variables=json.dumps({
-                            "1": response_text
-                        })
-                    )
-                    print(f"Sent RCS response to {from_number}")
-                except Exception as e:
-                    print(f"RCS failed, falling back to SMS: {e}")
-                    # Fallback to regular SMS
-                    twilio_client.messages.create(
-                        messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                        to=from_number,
-                        body=response_text
-                    )
-                    print(f"Sent SMS response to {from_number}")
-            else:
-                # Regular SMS response
-                twilio_client.messages.create(
-                    messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
-                    to=from_number,
-                    body=response_text
-                )
-                print(f"Sent SMS response to {from_number}")
-            
-            print(f"AI Response sent: {response_text[:100]}...")
         else:
-            print("No response text generated or no from_number")
+            response_text = "Thanks for reaching out to RinglyPro! How can I help you today?"
         
+        # Send the intelligent response
+        if response_text and from_number:
+            print(f"Attempting to send response to {from_number}")
+            print(f"Response: {response_text[:100]}...")
+            
+            # Send as regular message
+            twilio_client.messages.create(
+                messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
+                to=from_number,
+                body=response_text
+            )
+            
+            print(f"✅ AI Response sent successfully!")
+        else:
+            print("⚠️ No response text or from_number")
+        
+        return '', 200
+        
+    except Exception as e:
+        print(f"❌ Webhook error: {str(e)}")
+        traceback.print_exc()
         return '', 200
         
     except Exception as e:
